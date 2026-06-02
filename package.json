@@ -33,5 +33,8 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/closerclick/closer-click-identity.git"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.2.5"
   }
 }

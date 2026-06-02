@@ -7,11 +7,13 @@
  */
 
 import { createSync } from './sync.js'
+import {
+  initPeerStorage, loadPeers, savePeers, setPeersDirect, upsertPeer, onDirty
+} from './peerStore.js'
 
 const KEY_STORAGE = 'closer-click.identity.keypair'
 const ENC_KEY_STORAGE = 'closer-click.identity.enc-keypair'
 const ME_STORAGE  = 'closer-click.identity.me'
-const PEERS_STORAGE = 'closer-click.identity.peers'
 const NONCE_STORAGE = 'closer-click.identity.nonces' // recently signed nonces (replay window)
 
 // ----- crypto helpers -----
@@ -148,29 +150,9 @@ async function verifyBytes (publicJwkStr, bytes, signatureBase64) {
 }
 
 // ----- peer storage -----
-
-function loadPeers () {
-  try {
-    const raw = localStorage.getItem(PEERS_STORAGE)
-    if (!raw) return {}
-    return JSON.parse(raw) || {}
-  } catch (_) {
-    return {}
-  }
-}
-
-function savePeers (peers) {
-  localStorage.setItem(PEERS_STORAGE, JSON.stringify(peers))
-  if (sync) sync.markDirty()
-}
-
-function upsertPeer (publickey, patch) {
-  const peers = loadPeers()
-  const existing = peers[publickey] || { publickey, firstSeen: Date.now() }
-  peers[publickey] = { ...existing, ...patch, publickey, lastSeen: Date.now() }
-  savePeers(peers)
-  return peers[publickey]
-}
+// La persistencia del peer book vive en ./peerStore.js (IndexedDB con cache en
+// memoria + migración del localStorage viejo + fallback). loadPeers() sigue
+// síncrona; initPeerStorage() se llama en el bootstrap antes de atender mensajes.
 
 // ----- nonce replay protection -----
 
@@ -356,7 +338,7 @@ async function applyMergedFromSync (merged) {
   }
   if (merged.peers && typeof merged.peers === 'object') {
     // Direct write (don't trigger markDirty during merge apply)
-    localStorage.setItem(PEERS_STORAGE, JSON.stringify(merged.peers))
+    setPeersDirect(merged.peers)
   }
 }
 
@@ -819,6 +801,10 @@ const handlers = {
   encKeypair = await loadOrCreateEncKeypair()
   encPublickeyJwkStr = JSON.stringify(encKeypair.publicJwk)
 
+  // Cargar el peer book a memoria (IndexedDB, migrando del localStorage viejo)
+  // ANTES de crear el sync o atender mensajes — loadPeers() lee esta cache.
+  await initPeerStorage()
+
   const persistedMe = loadMe()
   let me
   if (persistedMe && persistedMe.publickey === publickeyJwkStr) {
@@ -840,6 +826,8 @@ const handlers = {
     applyMerged: applyMergedFromSync,
     mergeFn: mergeForSync
   })
+  // savePeers marca dirty para el sync vía este callback (el peerStore no conoce sync).
+  onDirty(() => { if (sync) sync.markDirty() })
 
   // Broadcast status events to all embedders
   const broadcastStatus = (payload) => {

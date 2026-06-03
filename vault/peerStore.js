@@ -19,6 +19,12 @@ export const PEERS_STORAGE = 'closer-click.identity.peers' // clave del localSto
 const IDB_NAME = 'cc-identity'
 const IDB_STORE = 'kv'
 const IDB_PEERS_KEY = 'peers.v1'
+// Flag de reconciliación one-time. Distingue "IndexedDB vacío porque ya
+// migramos y el usuario no tiene peers" de "vacío porque nunca migramos (o un
+// bug previo escribió {} y enmascaró la migración)". Sin esto, un `{}` escrito
+// por error quedaba como objeto truthy y la migración NO se reintentaba jamás,
+// perdiendo contactos que SIGUEN intactos en el localStorage viejo.
+const IDB_MIGRATED_KEY = 'peers.migrated.v1'
 
 let _peers = {}
 let _fallback = false
@@ -69,14 +75,23 @@ export async function initPeerStorage () {
   try {
     _idb = await openIdb()
     const stored = await idbGet(_idb, IDB_PEERS_KEY)
-    if (stored && typeof stored === 'object') {
-      _peers = stored
+    const storedPeers = (stored && typeof stored === 'object') ? stored : {}
+    const migratedFlag = await idbGet(_idb, IDB_MIGRATED_KEY)
+    if (migratedFlag) {
+      // Ya reconciliado: IndexedDB es la fuente de verdad (ignora el LS viejo).
+      _peers = storedPeers
     } else {
-      // Migración one-time desde el localStorage viejo.
-      const migrated = readLocalPeers()
-      _peers = migrated
+      // Primera corrida (o reintento tras el bug que escribía {}): unimos el
+      // peer book del localStorage viejo con lo que haya en IndexedDB —unión,
+      // IndexedDB gana en conflictos— para recuperar contactos que un bug previo
+      // pudo enmascarar. Nunca borra. Marcamos el flag para no rehacerlo (así no
+      // se "resucitan" contactos que el usuario borre más adelante).
+      const local = readLocalPeers()
+      _peers = { ...local, ...storedPeers }
+      const recovered = Object.keys(local).filter(k => !(k in storedPeers)).length
       await idbPut(_idb, IDB_PEERS_KEY, _peers)
-      if (Object.keys(migrated).length) console.log('[cc-identity] peers migrados localStorage → IndexedDB')
+      await idbPut(_idb, IDB_MIGRATED_KEY, true)
+      if (recovered) console.log(`[cc-identity] ${recovered} peer(s) recuperados del localStorage viejo → IndexedDB`)
     }
   } catch (e) {
     console.warn('[cc-identity] IndexedDB no disponible, uso localStorage:', e?.message)

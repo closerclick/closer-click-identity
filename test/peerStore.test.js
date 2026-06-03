@@ -29,6 +29,26 @@ function deleteDb (name) {
   })
 }
 
+// Escribe directo en IndexedDB (sin pasar por el módulo) para simular estados
+// previos, p.ej. el bug que dejaba peers.v1={} sin flag de migración.
+function rawIdbPut (key, val) {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('cc-identity', 1)
+    req.onupgradeneeded = () => {
+      const db = req.result
+      if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv')
+    }
+    req.onsuccess = () => {
+      const db = req.result
+      const tx = db.transaction('kv', 'readwrite')
+      tx.objectStore('kv').put(val, key)
+      tx.oncomplete = () => { db.close(); resolve() }
+      tx.onerror = () => reject(tx.error)
+    }
+    req.onerror = () => reject(req.error)
+  })
+}
+
 beforeEach(async () => {
   _resetForTest()
   ls.clear()
@@ -50,6 +70,24 @@ test('migra el peer book del localStorage viejo a IndexedDB (one-time)', async (
   ls.setItem(PEERS_STORAGE, JSON.stringify({ otro: { publickey: 'otro' } }))
   await initPeerStorage()
   assert.deepStrictEqual(loadPeers(), seed)              // gana lo de IDB, ignora el LS nuevo
+})
+
+test('recupera contactos si un bug previo dejó IndexedDB en {} sin flag', async () => {
+  // Estado del bug: peers.v1={} en IDB y SIN flag, pero los contactos siguen
+  // en el localStorage viejo (la migración no lo borra).
+  const seed = { pkX: { publickey: 'pkX', nickname: 'Zoe', isContact: true } }
+  ls.setItem(PEERS_STORAGE, JSON.stringify(seed))
+  await rawIdbPut('peers.v1', {})
+
+  await initPeerStorage()
+  assert.deepStrictEqual(loadPeers(), seed)              // recuperado del localStorage
+  await flushPeers()
+
+  // Reconciliación one-time: una segunda init ya NO mira el localStorage.
+  _resetForTest()
+  ls.setItem(PEERS_STORAGE, JSON.stringify({ pkY: { publickey: 'pkY' } }))
+  await initPeerStorage()
+  assert.deepStrictEqual(loadPeers(), seed)              // IDB manda, ignora LS nuevo
 })
 
 test('savePeers/upsertPeer hacen write-through a IndexedDB', async () => {

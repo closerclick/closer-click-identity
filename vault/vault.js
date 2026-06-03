@@ -772,7 +772,14 @@ const handlers = {
       localStorage.removeItem(ENC_KEY_STORAGE)
     }
 
-    if (peers && typeof peers === 'object') savePeers(peers)
+    // Unión, nunca clobber: un blob con peers={} (o parcial) NO debe borrar el
+    // peer book existente. Esto evitaba el caso real en que un importIdentity
+    // (p.ej. desde el bridge de la extensión, con un blob sin contactos) pisaba
+    // todos los contactos con {}. Los del blob ganan por clave; los locales que
+    // el blob no trae se conservan.
+    if (peers && typeof peers === 'object' && Object.keys(peers).length) {
+      savePeers({ ...loadPeers(), ...peers })
+    }
 
     // Recargar keypairs en runtime
     keypair = await loadOrCreateKeypair()

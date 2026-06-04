@@ -25,8 +25,12 @@ export class Identity {
   }
 
   static async connect (options = {}) {
-    if (singleton) return singleton
-    singleton = new Identity(options)
+    if (!singleton) singleton = new Identity(options)
+    // Esperar SIEMPRE a ready(): si otro caller creó el singleton pero su
+    // handshake con el vault aún no resolvió, devolver el singleton "pelado"
+    // dejaba `me` en null y las apps no encontraban el nickname (carrera).
+    // ready() es idempotente (devuelve la misma promesa), así que esto es
+    // seguro de llamar en cada connect().
     await singleton.ready()
     return singleton
   }

@@ -130,6 +130,10 @@ export class Identity {
   removeContact (publickey) { return this._h('removeContact', { publickey }) }
   listContacts () { return this._h('listContacts') }
   signData (data) { return this._h('signData', { data }) }
+  // Delegación de capacidad (sub-clave de dispositivo con scope/exp/revocación)
+  signDelegation (sub, scope, opts = {}) { return this._h('signDelegation', { sub, scope, ...opts }) }
+  revokeDelegation (nonce) { return this._h('revokeDelegation', { nonce }) }
+  listDelegations () { return this._h('listDelegations') }
   mergeEndorsements (subject, endorsements, askerPubkey) {
     return this._h('mergeEndorsements', { subject, endorsements, askerPubkey })
   }
@@ -169,3 +173,7 @@ export class Identity {
 }
 
 export default Identity
+
+// Helpers de capacidad SIN clave maestra (lado dispositivo + verificación), para que
+// un bridge/bot Node pueda crear su clave, firmar acciones y verificar cadenas D←P.
+export { makeDeviceKey, signWithDevice, verifyDelegation, verifyChain, pubkeyId, MAX_DELEGATION_MS, DEFAULT_DELEGATION_MS } from '../vault/capabilities.js'

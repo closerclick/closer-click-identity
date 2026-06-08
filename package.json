@@ -1,6 +1,6 @@
 {
   "name": "@closerclick/closer-click-identity",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "Identidad y rating de usuarios compartidos entre apps de Closer Click (vault iframe + postMessage)",
   "type": "module",
   "main": "src/index.js",
@@ -14,6 +14,9 @@
     "./node": {
       "import": "./src/node.js"
     },
+    "./capabilities": {
+      "import": "./vault/capabilities.js"
+    },
     "./vault/core.js": "./vault/core.js"
   },
   "files": [
@@ -23,7 +26,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test test/*.test.js"
   },
   "keywords": [
     "identity",

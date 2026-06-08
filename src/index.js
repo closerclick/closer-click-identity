@@ -178,6 +178,26 @@ export class Identity {
   }
 
   /**
+   * Firma un CERTIFICADO DE DELEGACIÓN: autoriza a una sub-clave de dispositivo
+   * `sub` (JWK string) a hacer `scope` en tu nombre, hasta `exp`, revocable por
+   * `nonce`. La clave maestra NUNCA sale del vault. `opts`: { ttlMs?, exp?, label?, nonce? }.
+   * @returns {Promise<{ cert: object }>}
+   */
+  async signDelegation (sub, scope, opts = {}) {
+    return this._call('signDelegation', { sub, scope, ...opts })
+  }
+
+  /** Revoca una delegación por su `nonce` (queda en la lista de revocación). */
+  async revokeDelegation (nonce) {
+    return this._call('revokeDelegation', { nonce })
+  }
+
+  /** Lista las delegaciones emitidas + la lista de revocación (para el gestor de dispositivos). */
+  async listDelegations () {
+    return this._call('listDelegations')
+  }
+
+  /**
    * Merge endorsements (signed ratings from third parties) about a subject
    * into the local peer book. Returns { merged, total }.
    */
@@ -341,3 +361,7 @@ export class Identity {
     })
   }
 }
+
+// Helpers de capacidad SIN clave maestra (lado dispositivo + verificación), reutilizables
+// por apps/bridges sin cargar el iframe del vault.
+export { makeDeviceKey, signWithDevice, verifyDelegation, verifyChain, pubkeyId, MAX_DELEGATION_MS, DEFAULT_DELEGATION_MS } from '../vault/capabilities.js'

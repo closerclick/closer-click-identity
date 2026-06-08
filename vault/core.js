@@ -18,10 +18,14 @@
  * vault, compartida por todos los runtimes.
  */
 
+import { signDelegationWith, MAX_DELEGATION_MS, DEFAULT_DELEGATION_MS } from './capabilities.js'
+
 export const KEY_STORAGE = 'closer-click.identity.keypair'
 export const ENC_KEY_STORAGE = 'closer-click.identity.enc-keypair'
 export const ME_STORAGE = 'closer-click.identity.me'
 export const NONCE_STORAGE = 'closer-click.identity.nonces' // replay window
+export const DELEGATIONS_STORAGE = 'closer-click.identity.delegations'   // caps emitidas
+export const REVOCATIONS_STORAGE = 'closer-click.identity.revocations'   // nonces revocados
 
 const NONCE_TTL_MS = 5 * 60 * 1000
 
@@ -155,6 +159,14 @@ export async function createIdentityCore ({ kv, peers, makeSync = null }) {
   function saveNonces (obj) { kv.setItem(NONCE_STORAGE, JSON.stringify(obj)) }
   function rememberNonce (nonce) { const o = loadNonces(); o[nonce] = Date.now(); saveNonces(o) }
   function isFreshNonce (nonce) { return Object.prototype.hasOwnProperty.call(loadNonces(), nonce) }
+
+  // ----- delegaciones de capacidad emitidas + revocaciones (kv-backed) -----
+
+  function loadJson (key) { try { return JSON.parse(kv.getItem(key) || '{}') || {} } catch (_) { return {} } }
+  const loadDelegations = () => loadJson(DELEGATIONS_STORAGE)
+  const saveDelegations = (o) => kv.setItem(DELEGATIONS_STORAGE, JSON.stringify(o))
+  const loadRevocations = () => loadJson(REVOCATIONS_STORAGE)
+  const saveRevocations = (o) => kv.setItem(REVOCATIONS_STORAGE, JSON.stringify(o))
 
   // ----- me (kv-backed) -----
 
@@ -451,6 +463,42 @@ export async function createIdentityCore ({ kv, peers, makeSync = null }) {
       const bytes = new TextEncoder().encode(canonicalStringify(data))
       const signature = await signBytes(keypair.privateKey, bytes)
       return { signature, publickey: publickeyJwkStr }
+    },
+
+    // ----- delegación de capacidad: la maestra firma un cert para una sub-clave -----
+    // de dispositivo `sub`, acotado por `scope` y `exp`, revocable por `nonce`.
+    // Es la ÚNICA forma en que la autoridad sale de la clave maestra, y va limitada.
+
+    async signDelegation ({ sub, scope, ttlMs, exp, nonce, label }) {
+      if (!sub || typeof sub !== 'string') throw new Error('sub (device pubkey) required')
+      if (!scope || (typeof scope !== 'string' && !Array.isArray(scope))) throw new Error('scope required')
+      const iat = Date.now()
+      const want = typeof exp === 'number' ? exp : iat + (Number(ttlMs) || DEFAULT_DELEGATION_MS)
+      const cappedExp = Math.min(want, iat + MAX_DELEGATION_MS)   // tope duro de vida
+      // `iss` se FUERZA a la propia maestra: el usuario no puede emitir cert para otro emisor.
+      const cert = await signDelegationWith(keypair.privateKey, publickeyJwkStr, { sub, scope, iat, exp: cappedExp, nonce: nonce || crypto.randomUUID() })
+      const store = loadDelegations()
+      store[cert.nonce] = { nonce: cert.nonce, sub, scope, iat, exp: cappedExp, label: typeof label === 'string' ? label.slice(0, 60) : '' }
+      saveDelegations(store)
+      return { cert }
+    },
+
+    async revokeDelegation ({ nonce }) {
+      if (!nonce || typeof nonce !== 'string') throw new Error('nonce required')
+      const rev = loadRevocations()
+      rev[nonce] = Date.now()
+      saveRevocations(rev)
+      const store = loadDelegations()
+      if (store[nonce]) { store[nonce].revokedAt = rev[nonce]; saveDelegations(store) }
+      return { ok: true, revokedAt: rev[nonce] }
+    },
+
+    async listDelegations () {
+      const store = loadDelegations(); const rev = loadRevocations()
+      return {
+        issued: Object.values(store).sort((a, b) => (b.iat || 0) - (a.iat || 0)),
+        revoked: Object.keys(rev).map(nonce => ({ nonce, revokedAt: rev[nonce] }))
+      }
     },
 
     async listContacts () {
